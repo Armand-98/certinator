@@ -30,21 +30,48 @@ contain a brand. Reproduce with `python tools/evaluate.py`.
 The honest limit of that number: the corpus is written by hand, so it measures
 the matcher against one person's idea of what impersonation looks like.
 
-**Precision, against the live logs**, where nobody chose the names:
+**Against the live logs**, where nobody chose the names. 15 heavily targeted
+brands, four logs, one pass:
 
 | | |
 |---|---|
-| Log entries read | 12,000 |
-| Certificate names checked | **21,900** |
-| False positives | **0** |
-| Brands watched | 8 |
+| Log entries read | 48,000 |
+| Certificate names checked | **88,784** |
+| Findings | 6 |
+| Genuine impersonation registrations | **5** |
+| False positives | **1** |
 
-No true positives in that window either, and that is the expected result: a
-specific brand being impersonated in any given few seconds of global issuance
-is rare. It is why the tool is built to run continuously rather than as a spot
-check.
+Every certificate found had been issued in the preceding 40 minutes, which is
+the point of the tool: these domains were caught while they were still being
+set up.
 
-## Quick start
+```
+[HIGH] backup04.wellsfargo.comgmail.com
+       wellsfargo is a label beneath comgmail.com
+[HIGH] 8528reerohghuiteceek.stadium.011dyohthoquuoshushi.wellsfargo.finacial.com
+       wellsfargo is a label beneath finacial.com
+[HIGH] join.bede.telegram.vpncustomize.www.speedtest.net.abrha.co.za
+       telegram is a label beneath abrha.co.za
+[HIGH] api.whatsapp.luckylab.my.id
+       whatsapp is a label beneath luckylab.my.id
+[HIGH] notexistsvpn2x.ronlox.com
+       ronlox is one edit from roblox
+```
+
+`comgmail.com` and `finacial.com` are built to be misread: the first so a URL
+reads `...wellsfargo.com...`, the second as a misspelling of `financial`. Both,
+and `ronlox.com`, resolve to domain-parking nameservers, so what is confirmed is
+that they are impersonation registrations, not that they are currently serving
+phishing pages. That is the normal state of a domain caught this early.
+
+The sixth finding, `titusapi-devfoo-federation.us-east-1.test.netflix.net`, is a
+false positive and an instructive one. `netflix.net` really is Netflix's, and
+Titus is their own container platform, but the run declared `netflix.com`,
+`nflxvideo.net` and `nflximg.net` and not `netflix.net`. Nothing in a
+certificate says who owns a domain, so an incomplete `--own` list is the one
+false-positive class this design cannot remove.
+
+## Quick start## Quick start
 
 ```bash
 python -m venv .venv
@@ -157,7 +184,7 @@ Stated because a detector without known limits has not been tested properly.
 ## Development
 
 ```bash
-./.venv/bin/python -m pytest        # 407 tests, no network required
+./.venv/bin/python -m pytest        # 415 tests, no network required
 python tools/build_suffixes.py     # refresh the vendored Public Suffix List
 ```
 
