@@ -12,6 +12,38 @@ extraction and the RFC 6962 log-entry decoder are written from the
 specifications. No `cryptography`, no OpenSSL binding, no `requests`, no
 `idna`, no `tldextract`. Python 3.10+ standard library only.
 
+## Measured results
+
+Two numbers, measuring two different things.
+
+**Recall, against a labelled corpus.** 22 names in the shapes real phishing
+registrations take, plus 25 legitimate names including the brands' own
+subdomains, alternate TLDs they own, unrelated domains, and names that merely
+contain a brand. Reproduce with `python tools/evaluate.py`.
+
+| | |
+|---|---|
+| Impersonations detected | **22/22** |
+| Misclassified technique | 0 |
+| False positives on legitimate names | **0/25** |
+
+The honest limit of that number: the corpus is written by hand, so it measures
+the matcher against one person's idea of what impersonation looks like.
+
+**Precision, against the live logs**, where nobody chose the names:
+
+| | |
+|---|---|
+| Log entries read | 12,000 |
+| Certificate names checked | **21,900** |
+| False positives | **0** |
+| Brands watched | 8 |
+
+No true positives in that window either, and that is the expected result: a
+specific brand being impersonated in any given few seconds of global issuance
+is rare. It is why the tool is built to run continuously rather than as a spot
+check.
+
 ## Quick start
 
 ```bash
@@ -125,7 +157,7 @@ Stated because a detector without known limits has not been tested properly.
 ## Development
 
 ```bash
-./.venv/bin/python -m pytest        # 344 tests, no network required
+./.venv/bin/python -m pytest        # 407 tests, no network required
 python tools/build_suffixes.py     # refresh the vendored Public Suffix List
 ```
 

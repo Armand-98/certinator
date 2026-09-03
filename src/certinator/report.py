@@ -55,6 +55,7 @@ class Summary:
     names: int = 0
     parse_failures: int = 0
     duplicates: int = 0
+    unreadable_logs: int = 0
     matches: list[Match] = field(default_factory=list)
     # Where each log was read up to, so an interrupted watch resumes at the
     # gap rather than re-reading it or silently stepping over it.
@@ -106,6 +107,7 @@ def render_json(summary: Summary) -> str:
         "names": summary.names,
         "parse_failures": summary.parse_failures,
         "suppressed_duplicates": summary.duplicates,
+        "unreadable_logs": summary.unreadable_logs,
         "counts": summary.counts(),
         "matches": [as_dict(m) for m in summary.ranked()],
     }, indent=2)
@@ -134,6 +136,8 @@ def render_text(summary: Summary, *, colour: bool | None = None,
         detail += f", {summary.parse_failures:,} unparseable"
     if summary.duplicates:
         detail += f", {summary.duplicates:,} repeats of a domain already shown"
+    if summary.unreadable_logs:
+        detail += (f", {summary.unreadable_logs} log(s) unreadable and skipped")
     lines.append(paint(detail, _DIM))
     lines.append("")
 

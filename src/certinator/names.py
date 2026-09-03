@@ -30,12 +30,19 @@ MAX_LABEL = 63
 
 # Folding can uncover a label the decoder could not see the first time round,
 # so skeleton() repeats until it settles. Real names settle on the first pass.
-MAX_FOLD_PASSES = 3
+# The bound has to be high enough to reach a fixed point rather than to stop
+# wherever the count ran out: each nested xn-- wrap costs at least five
+# characters ("xn--" and the delimiter punycode appends), so a label capped at
+# MAX_LABEL octets holds twelve of them.
+MAX_FOLD_PASSES = 16
 
-# UTS 46 treats these three as label separators, and the ones after them are
-# what NFKD turns into a full stop or an asterisk further down. They are folded
-# here so that a name is stripped the same way whether or not it has already
-# been through fold_confusables(); that is what keeps skeleton() idempotent.
+# UTS 46 treats the first three as label separators, and the rest are the dot
+# and star forms NFKD would otherwise only uncover further down, after the
+# wildcard and the root dot had already been stripped. Folding them here strips
+# a name the same way whether or not it has been through fold_confusables().
+# It is not every character NFKD decomposes onto a full stop (U+2488 DIGIT ONE
+# FULL STOP is one it does not separate on, and should not): the rest are what
+# the settling loop in skeleton() is for.
 _SEPARATORS = str.maketrans({
     "。": ".",      # IDEOGRAPHIC FULL STOP
     "．": ".",      # FULLWIDTH FULL STOP
@@ -66,7 +73,9 @@ _SEPARATORS = str.maketrans({
 _GROUPS = {
     "a": "аαɑ",              # Cyrillic a, Greek alpha, Latin alpha
     "b": "вьβ",              # Cyrillic ve, soft sign, Greek beta
-    "c": "сϲ",                    # Cyrillic es, Greek lunate sigma
+    "c": "сϲςσ",                 # Cyrillic es, Greek lunate sigma (drawn as
+                                            # a Latin c) and the two sigmas
+                                            # casefold routes it through
     "d": "ԁđ",                    # Cyrillic komi de, Latin d with stroke
     "e": "еε",                    # Cyrillic ie, Greek epsilon
     "g": "ɡ",                          # Latin script g
@@ -127,13 +136,15 @@ def to_unicode(name: str) -> str:
     """
     if len(name) > MAX_NAME:
         name = name[:MAX_NAME]
-    if "xn--" not in name:
+    # DNS is case insensitive, so a certificate may spell the prefix XN--, and
+    # RFC 3492 ignores case in the encoded digits either way.
+    if "xn--" not in name.lower():
         return name
     return ".".join(_decode_label(label) for label in name.split("."))
 
 
 def _decode_label(label: str) -> str:
-    if not label.startswith("xn--") or len(label) > MAX_LABEL:
+    if label[:4].lower() != "xn--" or len(label) > MAX_LABEL:
         return label
     try:
         decoded = codecs.decode(label[4:].encode("ascii"), "punycode")
@@ -161,8 +172,10 @@ def fold_confusables(text: str) -> str:
     # Casefolding first, so the table needs only lowercase keys and so nothing
     # after this point can reintroduce a combining mark: casefolding U+0130
     # yields an i and a combining dot, which the next step would otherwise
-    # strip only on a second pass.
-    text = unicodedata.normalize("NFKD", text.casefold())
+    # strip only on a second pass. Casefolding again afterwards catches the
+    # capitals a compatibility decomposition hands back: U+1D3E MODIFIER
+    # LETTER CAPITAL P decomposes to a bare P, which no lowercase key matches.
+    text = unicodedata.normalize("NFKD", text.casefold()).casefold()
     # Marks strip the accents (so paypál and paypal agree) and the C classes
     # strip the invisibles: a zero width joiner or a soft hyphen inside a label
     # is there to break a comparison, not to be seen.

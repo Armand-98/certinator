@@ -135,3 +135,29 @@ def test_parse_failures_reach_the_summary():
         summary = scan([fake_log()], matcher, recent=10)
     assert summary.parse_failures == 1
     assert len(summary.matches) == 1
+
+
+def test_a_log_that_raises_a_ct_error_is_skipped_not_fatal():
+    """CtError derives from Exception, not OSError, so an OSError guard alone
+    caught nothing and one rate-limited log took the whole run with it."""
+    from certinator.ctlog import CtError
+    matcher = Matcher([Brand.build("paypal", ["paypal.com"])])
+    with patch("certinator.watch.tree_size", side_effect=CtError("429")):
+        summary = scan([fake_log()], matcher, recent=10)
+    assert summary.matches == []
+    assert summary.unreadable_logs == 1
+
+
+def test_a_log_failing_partway_costs_only_its_own_entries():
+    def blows_up(*_args, **_kwargs):
+        yield (0, cert_leaf("paypa1.com"))
+        raise CtError("log went away")
+
+    from certinator.ctlog import CtError
+    matcher = Matcher([Brand.build("paypal", ["paypal.com"])], min_score=0.7)
+    with patch("certinator.watch.tree_size", return_value=5), \
+         patch("certinator.watch.entries", blows_up):
+        summary = scan([fake_log()], matcher, recent=10)
+
+    assert [m.name for m in summary.matches] == ["paypa1.com"]
+    assert summary.unreadable_logs == 1

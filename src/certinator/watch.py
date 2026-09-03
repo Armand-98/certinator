@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Sequence
 
-from .ctlog import Log, entries, tree_size
+from .ctlog import CtError, Log, entries, tree_size
 from .names import registrable
 from .leaf import LeafError, parse_leaf
 from .match import Matcher
@@ -35,6 +35,7 @@ class Counters:
     names: int = 0
     failures: int = 0
     duplicates: int = 0
+    unreadable: int = 0
 
 
 class _Seen:
@@ -101,25 +102,34 @@ def scan(logs: Sequence[Log], matcher: Matcher, *, recent: int = DEFAULT_RECENT,
     for log in logs:
         try:
             size = tree_size(log, timeout=timeout)
-        except OSError:
+        except (OSError, CtError):
+            counters.unreadable += 1
             continue
         start = max(0, size - recent)
-        for index, leaf_input in entries(log, start, size - 1, timeout=timeout):
-            counters.entries += 1
-            for observation in observations(log.name, index, leaf_input, counters):
-                found = matcher.match(observation)
-                if found is None:
-                    continue
-                if not seen.is_new(found):
-                    counters.duplicates += 1
-                    continue
-                summary.matches.append(found)
-                if on_match:
-                    on_match(found)
+        try:
+            for index, leaf_input in entries(log, start, size - 1,
+                                             timeout=timeout):
+                counters.entries += 1
+                for observation in observations(log.name, index, leaf_input,
+                                                counters):
+                    found = matcher.match(observation)
+                    if found is None:
+                        continue
+                    if not seen.is_new(found):
+                        counters.duplicates += 1
+                        continue
+                    summary.matches.append(found)
+                    if on_match:
+                        on_match(found)
+        except (OSError, CtError):
+            # A log that rate limits, disappears or answers with something
+            # unreadable costs its own entries, not the whole run.
+            counters.unreadable += 1
 
     summary.entries, summary.names = counters.entries, counters.names
     summary.parse_failures = counters.failures
     summary.duplicates = counters.duplicates
+    summary.unreadable_logs = counters.unreadable
     return summary
 
 
@@ -144,7 +154,8 @@ def follow(logs: Sequence[Log], matcher: Matcher, *,
         if log.name not in at:
             try:
                 at[log.name] = tree_size(log, timeout=timeout)
-            except OSError:
+            except (OSError, CtError):
+                counters.unreadable += 1
                 continue
 
     while not (should_stop and should_stop()):
@@ -155,29 +166,38 @@ def follow(logs: Sequence[Log], matcher: Matcher, *,
                 continue
             try:
                 size = tree_size(log, timeout=timeout)
-            except OSError:
+            except (OSError, CtError):
+                counters.unreadable += 1
                 continue
             if size <= start:
                 continue
             moved = True
-            for index, leaf_input in entries(log, start, size - 1, timeout=timeout):
-                counters.entries += 1
-                at[log.name] = index + 1
-                for observation in observations(log.name, index, leaf_input,
-                                                counters):
-                    found = matcher.match(observation)
-                    if found is None:
-                        continue
-                    if not seen.is_new(found):
-                        counters.duplicates += 1
-                        continue
-                    summary.matches.append(found)
-                    if on_match:
-                        on_match(found)
+            try:
+                for index, leaf_input in entries(log, start, size - 1,
+                                                 timeout=timeout):
+                    counters.entries += 1
+                    at[log.name] = index + 1
+                    for observation in observations(log.name, index, leaf_input,
+                                                    counters):
+                        found = matcher.match(observation)
+                        if found is None:
+                            continue
+                        if not seen.is_new(found):
+                            counters.duplicates += 1
+                            continue
+                        summary.matches.append(found)
+                        if on_match:
+                            on_match(found)
+            except (OSError, CtError):
+                # The position is already advanced to the last entry actually
+                # read, so the next pass resumes at the gap rather than
+                # stepping over it.
+                counters.unreadable += 1
 
         summary.entries, summary.names = counters.entries, counters.names
         summary.parse_failures = counters.failures
         summary.duplicates = counters.duplicates
+        summary.unreadable_logs = counters.unreadable
         summary.positions = dict(at)
 
         if should_stop and should_stop():

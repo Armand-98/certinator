@@ -9,15 +9,16 @@ a two label suffix (co.uk), a wildcard rule (*.ck), the exception that
 overrides it (!www.ck), and a suffix that is in no list at all.
 """
 
+import codecs
 import importlib.util
 import unicodedata
 from pathlib import Path
 
 import pytest
 
-from certinator.names import (MAX_NAME, fold_confusables, labels, normalize,
-                              public_suffix, registrable, skeleton, subdomain,
-                              to_unicode)
+from certinator.names import (MAX_LABEL, MAX_NAME, _GROUPS, fold_confusables,
+                              labels, normalize, public_suffix, registrable,
+                              skeleton, subdomain, to_unicode)
 
 CYRILLIC_PAYPAL = "раураl.com"   # ра у ра + Latin l
 GREEK_PAYPAL = "ραyραl.com"           # rho alpha rho alpha
@@ -68,6 +69,11 @@ def test_to_unicode_keeps_a_label_it_cannot_decode(name):
     assert to_unicode(name) == name
 
 
+def test_to_unicode_decodes_a_prefix_written_in_any_case():
+    """DNS is case insensitive, so a certificate can spell the prefix XN--."""
+    assert to_unicode(APPLE_PUNYCODE.upper() + ".COM") == "аррӏе.COM"
+
+
 def test_to_unicode_leaves_ordinary_names_alone():
     assert to_unicode("www.paypal.com") == "www.paypal.com"
     assert to_unicode("") == ""
@@ -98,6 +104,46 @@ def test_fold_confusables(raw, expected):
     assert fold_confusables(raw) == expected
 
 
+def test_every_confusable_in_the_table_folds_to_its_target():
+    """An entry casefold rewrites first is an entry that can never fire.
+
+    U+03F2 GREEK LUNATE SIGMA SYMBOL is drawn exactly like a Latin c, but it
+    casefolds to U+03C2 FINAL SIGMA before the table is consulted, so listing
+    the lunate form alone leaves the character unfolded.
+    """
+    for latin, group in _GROUPS.items():
+        for source in group:
+            assert fold_confusables(source) == latin, f"U+{ord(source):04X}"
+
+
+def test_greek_lunate_sigma_reads_as_c():
+    assert skeleton("\u03f2hase.com") == "chase.com"
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("\u1d3eaypal.com", "paypal.com"),      # MODIFIER LETTER CAPITAL P
+    ("\u1d39icrosoft.com", "microsoft.com"),  # MODIFIER LETTER CAPITAL M
+])
+def test_fold_handles_a_decomposition_that_yields_a_capital(raw, expected):
+    """NFKD runs after casefold and can hand back an uppercase letter.
+
+    U+1D3E decomposes to a bare P, which no lowercase table key matches.
+    """
+    assert fold_confusables(raw) == expected
+
+
+@pytest.mark.parametrize("block", [
+    range(0x0370, 0x0400),    # Greek, where the symbol forms decompose
+    range(0x1d00, 0x1d80),    # phonetic extensions, the modifier capitals
+    range(0x2100, 0x2150),    # letterlike symbols
+    range(0xff00, 0xff60),    # fullwidth
+])
+def test_fold_is_idempotent_over_the_blocks_that_decompose(block):
+    for code_point in block:
+        once = fold_confusables(chr(code_point))
+        assert fold_confusables(once) == once, f"U+{code_point:04X}"
+
+
 def test_fold_leaves_a_plain_name_untouched():
     assert fold_confusables("paypal.com") == "paypal.com"
 
@@ -120,6 +166,27 @@ def test_skeleton_folds_a_hidden_punycode_label():
     assert skeleton("хn--pple-43d.com") == "apple.com"
 
 
+def _nest(label: str, depth: int) -> str:
+    for _ in range(depth):
+        label = "xn--" + codecs.encode(label, "punycode").decode("ascii")
+    return label
+
+
+@pytest.mark.parametrize("depth", range(1, 12))
+def test_skeleton_settles_on_stacked_punycode(depth):
+    """Each xn-- wrap costs five characters, so a 63 octet label holds twelve.
+
+    Stopping the fold before a name settles leaves an xn-- label in the
+    skeleton, which is both a name the matcher never resolves and a skeleton
+    that is not its own skeleton.
+    """
+    name = _nest("apple", depth) + ".com"
+    assert len(name.partition(".")[0]) <= MAX_LABEL
+    once = skeleton(name)
+    assert once == "apple.com"
+    assert skeleton(once) == once
+
+
 IDEMPOTENCE_CORPUS = [
     "", "*", "*.*.evil.com", "paypal.com.", "www.foo.co.uk", CYRILLIC_PAYPAL,
     GREEK_PAYPAL, FULLWIDTH, APPLE_PUNYCODE + ".com", "xn--abc.com", "xn--",
@@ -127,6 +194,9 @@ IDEMPOTENCE_CORPUS = [
     "＊．evil.com", "paýpal.com", "İstanbul.com",
     "a" * 300 + ".com", "..a..b..", "��.com", "0-1-5.rn.com",
     "…evil.com", "ẞ.com", "xn--\ud800.com",
+    # U+2488 decomposes onto "1." and U+33C7 onto "Co.", so NFKD uncovers a
+    # full stop that normalize() never saw and no browser splits a label on.
+    "evil\u2488com", "\u2488\u2488evil.com", "evil.com\u33c7",
 ]
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from .ctlog import discover
+from .ctlog import CtError, discover
 from .match import BrandError, Matcher
 from .menu import TUTORIAL, ask, interactive
 from .menu import run as run_menu
@@ -140,7 +140,7 @@ def _guard(action) -> None:
         action()
     except (BrandError, TrustError) as error:
         print(f"   {error}")
-    except OSError as error:
+    except (OSError, CtError) as error:
         print(f"   network error: {error}")
     except KeyboardInterrupt:
         print("\n   stopped.")
@@ -238,7 +238,7 @@ def main(argv: list[str] | None = None) -> int:
     except TrustError as error:
         print(f"certinator: {error}", file=sys.stderr)
         return EXIT_ERROR
-    except OSError as error:
+    except (OSError, CtError) as error:
         print(f"certinator: network error: {error}", file=sys.stderr)
         return EXIT_ERROR
     except KeyboardInterrupt:
