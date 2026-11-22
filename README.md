@@ -71,7 +71,7 @@ Titus is their own container platform, but the run declared `netflix.com`,
 certificate says who owns a domain, so an incomplete `--own` list is the one
 false-positive class this design cannot remove.
 
-## Quick start## Quick start
+## Quick start
 
 ```bash
 python -m venv .venv
